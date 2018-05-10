@@ -1,2 +1,4 @@
 data
 CARLA
+.ipynb_checkpoints
+__pycache__
