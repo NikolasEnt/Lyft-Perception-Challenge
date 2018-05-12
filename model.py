@@ -45,14 +45,11 @@ class DecoderBlock(nn.Module):
         return x
 
 class LinkNet34(nn.Module):
-    def __init__(self, input_channels, output_channels):
+    def __init__(self, num_classes, num_channels=3):
         super().__init__()
-        assert input_channels > 0
+        assert num_channels == 3, "num channels not used now. to use changle first conv layer to support num channels other then 3"
         filters = [64, 128, 256, 512]
-        resnet = models.resnet34(pretrained=False)
-
-        #if input_channels != 3:
-        resnet.conv1 = nn.Conv2d(input_channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(7, 3), bias=False)
+        resnet = models.resnet34(pretrained=True)
 
         self.firstconv = resnet.conv1
         self.firstbn = resnet.bn1
@@ -72,11 +69,9 @@ class LinkNet34(nn.Module):
         # Final Classifier
         self.finaldeconv1 = nn.ConvTranspose2d(filters[0], 32, 3, stride=2)
         self.finalrelu1 = nonlinearity(inplace=True)
-        self.finalconv2 = nn.Conv2d(32, 32, 7, padding=(0,3))
+        self.finalconv2 = nn.Conv2d(32, 32, 3)
         self.finalrelu2 = nonlinearity(inplace=True)
-        self.finalconv3 = nn.Conv2d(32, 32, 3)
-        self.finalrelu3 = nonlinearity(inplace=True)
-        self.finalconv4 = nn.Conv2d(32, output_channels, 2, padding=(0,1))
+        self.finalconv3 = nn.Conv2d(32, num_classes, 2, padding=1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -102,6 +97,4 @@ class LinkNet34(nn.Module):
         x = self.finalconv2(x)
         x = self.finalrelu2(x)
         x = self.finalconv3(x)
-        x = self.finalrelu3(x)
-        x = self.finalconv4(x)
         return self.sigmoid(x)
