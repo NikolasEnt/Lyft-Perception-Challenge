@@ -98,3 +98,63 @@ class LinkNet34(nn.Module):
         x = self.finalrelu2(x)
         x = self.finalconv3(x)
         return self.sigmoid(x)
+
+
+class LinkNet18(nn.Module):
+    def __init__(self, input_channels, output_channels):
+        super().__init__()
+        assert input_channels > 0
+        filters = [64, 128, 256, 512]
+        resnet = models.resnet18(pretrained=False)
+
+        if input_channels != 3:
+            resnet.conv1 = Conv2d(input_channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+
+        self.firstconv = resnet.conv1
+        self.firstbn = resnet.bn1
+        self.firstrelu = resnet.relu
+        self.firstmaxpool = resnet.maxpool
+        self.encoder1 = resnet.layer1
+        self.encoder2 = resnet.layer2
+        self.encoder3 = resnet.layer3
+        self.encoder4 = resnet.layer4
+
+        # Decoder
+        self.decoder4 = DecoderBlock(filters[3], filters[2])
+        self.decoder3 = DecoderBlock(filters[2], filters[1])
+        self.decoder2 = DecoderBlock(filters[1], filters[0])
+        self.decoder1 = DecoderBlock(filters[0], filters[0])
+
+        # Final Classifier
+        self.finaldeconv1 = nn.ConvTranspose2d(filters[0], 32, 3, stride=2)
+        self.finalrelu1 = nonlinearity(inplace=True)
+        self.finalconv2 = nn.Conv2d(32, 32, 3)
+        self.finalrelu2 = nonlinearity(inplace=True)
+        self.finalconv3 = nn.Conv2d(32, output_channels, 2, padding=1)
+        self.sigmoid = nn.Sigmoid()
+
+    # noinspection PyCallingNonCallable
+    def forward(self, x):
+        # Encoder
+        x = self.firstconv(x)
+        x = self.firstbn(x)
+        x = self.firstrelu(x)
+        x = self.firstmaxpool(x)
+        e1 = self.encoder1(x)
+        e2 = self.encoder2(e1)
+        e3 = self.encoder3(e2)
+        e4 = self.encoder4(e3)
+
+        # Decoder with Skip Connections
+        d4 = self.decoder4(e4) + e3
+        d3 = self.decoder3(d4) + e2
+        d2 = self.decoder2(d3) + e1
+        d1 = self.decoder1(d2)
+
+        # Final Classification
+        f1 = self.finaldeconv1(d1)
+        f2 = self.finalrelu1(f1)
+        f3 = self.finalconv2(f2)
+        f4 = self.finalrelu2(f3)
+        f5 = self.finalconv3(f4)
+        return self.sigmoid(f5)
