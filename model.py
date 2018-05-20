@@ -50,7 +50,7 @@ class LinkNet34(nn.Module):
         assert num_channels == 3, "num channels not used now. to use changle first conv layer to support num channels other then 3"
         filters = [64, 128, 256, 512]
         resnet = models.resnet34(pretrained=True)
-
+        self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
         self.firstconv = resnet.conv1
         self.firstbn = resnet.bn1
         self.firstrelu = resnet.relu
@@ -75,6 +75,7 @@ class LinkNet34(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
+        x = self.pad(x)
         # Encoder
         x = self.firstconv(x)
         x = self.firstbn(x)

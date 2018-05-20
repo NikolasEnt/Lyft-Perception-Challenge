@@ -2,10 +2,10 @@ import os
 import sys
 import cv2
 import time
-import torch
+
 import numpy as np
-import skvideo.io
-import torchvision.transforms as transforms
+import torch.nn as nn
+from torchvision.transforms import ToTensor
 from torch.utils.data import Dataset, DataLoader
 
 from io import BytesIO, StringIO
@@ -16,43 +16,99 @@ from model import LinkNet34
 
 from joblib import Parallel, delayed
 
+#def init_yappi():
+  #OUT_FILE = './profile'
 
+  #import atexit
+  #import yappi
+
+  #print('[YAPPI START]')
+  #yappi.set_clock_type('wall')
+  #yappi.start()
+
+  #@atexit.register
+  #def finish_yappi():
+    #print('[YAPPI STOP]')
+
+    #yappi.stop()
+
+    #print('[YAPPI WRITE]')
+
+    #stats = yappi.get_func_stats()
+
+    #for stat_type in ['pstat', 'callgrind', 'ystat']:
+      #print('writing {}.{}'.format(OUT_FILE, stat_type))
+      #stats.save('{}.{}'.format(OUT_FILE, stat_type), type=stat_type)
+
+    #print('\n[YAPPI FUNC_STATS]')
+
+    #print('writing {}.func_stats'.format(OUT_FILE))
+    #with open('{}.func_stats'.format(OUT_FILE), 'w') as fh:
+      #stats.print_all(out=fh)
+
+    #print('\n[YAPPI THREAD_STATS]')
+
+    #print('writing {}.thread_stats'.format(OUT_FILE))
+    #tstats = yappi.get_thread_stats()
+    #with open('{}.thread_stats'.format(OUT_FILE), 'w') as fh:
+      #tstats.print_all(out=fh)
+
+    #print('[YAPPI OUT]')
+
+#init_yappi()
+
+c_time = time.time()
 v_file = sys.argv[-1]
-model_path = './data/models/resnet34_002_cpt.pth'
+model_path = './data/models/resnet34_003_cpt2.pth'
 
-batch = 8
+batch = 6
 THRES_VEH = 0.5
 THRES_ROAD = 0.5
 
-def encode(array):
-    pil_img = Image.fromarray(array)
-    buff = BytesIO()
-    pil_img.save(buff, format="PNG", compress_level=1)
-    return pybase64.b64encode(buff.getvalue()).decode("utf-8") 
+class PostProcess(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.zero = torch.tensor(0).type(torch.cuda.ByteTensor)
+        self.one = torch.tensor(0).type(torch.cuda.ByteTensor)
 
-def process_pred(img):
-    binary_car_result = np.where(img[1,:,:]>THRES_VEH,1,0).astype('uint8')
-    binary_road_result = np.where(img[0,:,:]>THRES_ROAD,1,0).astype('uint8')
-    return [encode(binary_car_result), encode(binary_road_result)]
+    def forward(self, x):
+        x = x[:, 1:, 4:604, :]
+        car = torch.where(x[:,1,:,:]>THRES_VEH, self.one, self.zero)
+        road = torch.where(x[:,0,:,:]>THRES_ROAD, self.one, self.zero)
+        return [car, road]
+
+def encode(array):
+    buff = cv2.imencode(".png", array)[1]
+    return pybase64.b64encode(buff).decode("utf-8") 
+
+def process_pred(car, road):
+    return [encode(car.cpu().data.numpy()),
+            encode(road.cpu().data.numpy())]
 
 class LyftTestDataset(Dataset):
     def __init__(self, v_file, img_transform=None):
-        self.video = skvideo.io.vread(v_file)
+        cap = cv2.VideoCapture(v_file)
+        self.video = []
+        ret = True
+        while ret:
+            ret, img = cap.read()
+            self.video.append(img)
         self.img_transform = img_transform
 
     def __len__(self):
-        return self.video.shape[0]
+        return len(self.video)-1
 
     def __getitem__(self, idx):
-        img = self.video[idx, :, :, :]
-        img = cv2.copyMakeBorder(img,4,4,0,0,cv2.BORDER_REFLECT)
+        img = self.video[idx]
         if self.img_transform is not None:
             img = self.img_transform(img)
         return img
 
-test_dataset = LyftTestDataset(v_file, transforms.ToTensor())
-test_loader = DataLoader(test_dataset, batch_size=batch, shuffle=False) #num_workers=2, pin_memory=True
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") 
+
+test_dataset = LyftTestDataset(v_file, ToTensor())
+test_loader = DataLoader(test_dataset, batch_size=batch, shuffle=False,
+                         num_workers=2, pin_memory=True)
+device = torch.device("cuda:0") 
 model = LinkNet34(3, 3).to(device)
 state = torch.load(model_path)
 model.load_state_dict(state)
@@ -60,18 +116,19 @@ model.eval()
 
 answer_key = {}
 frame = 1
-c_time = time.time()
-with Parallel(n_jobs=4, backend="threading") as parallel:
-    for data in test_loader:
-        pred = model(data.type(torch.cuda.FloatTensor))
-        pred = pred[:, 1:, 4:604, :].cpu().data.numpy()
-        res = parallel(delayed(process_pred)(pred[i, :, :, :]) for i in range(pred.shape[0]))
-        answer_key.update({(i+frame):enc for (i, enc) in enumerate(res)})
-        frame+=len(res)
+postprocess = PostProcess()
+with torch.no_grad():
+    with Parallel(n_jobs=6, backend="threading") as parallel:
+        for data in test_loader:
+            pred = model(data.to(device))
+            pred = postprocess(pred)
+            res = parallel(delayed(process_pred)(pred[0][i, :, :], pred[1][i, :, :]) for i in range(pred[0].shape[0]))
+            answer_key.update({(i+frame):enc for (i, enc) in enumerate(res)})
+            frame+=pred[0].shape[0]
 
 print(time.time()-c_time)
 
-#print (json.dumps(answer_key))
+#print(json.dumps(answer_key))
 
-with open('preds.json', 'w') as outfile:
-    json.dump(answer_key, outfile)
+#with open('preds.json', 'w') as outfile:
+    #json.dump(answer_key, outfile)
