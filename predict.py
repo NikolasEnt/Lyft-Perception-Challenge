@@ -2,7 +2,7 @@ import os
 import sys
 import cv2
 import time
-
+import torch
 import numpy as np
 import torch.nn as nn
 from torchvision.transforms import ToTensor
@@ -61,7 +61,7 @@ c_time = time.time()
 v_file = sys.argv[-1]
 model_path = './data/models/resnet34_003_cpt2.pth'
 
-batch = 6
+batch = 4
 THRES_VEH = 0.5
 THRES_ROAD = 0.5
 
@@ -69,12 +69,13 @@ class PostProcess(nn.Module):
     def __init__(self):
         super().__init__()
         self.zero = torch.tensor(0).type(torch.cuda.ByteTensor)
-        self.one = torch.tensor(0).type(torch.cuda.ByteTensor)
+        self.one = torch.tensor(1).type(torch.cuda.ByteTensor)
 
     def forward(self, x):
         x = x[:, 1:, 4:604, :]
         car = torch.where(x[:,1,:,:]>THRES_VEH, self.one, self.zero)
         road = torch.where(x[:,0,:,:]>THRES_ROAD, self.one, self.zero)
+        print(x[:,1,:,:].max(), car.max(), car.min(), torch.sum(car), car.type())
         return [car, road]
 
 def encode(array):
@@ -118,17 +119,18 @@ answer_key = {}
 frame = 1
 postprocess = PostProcess()
 with torch.no_grad():
-    with Parallel(n_jobs=6, backend="threading") as parallel:
+    with Parallel(n_jobs=1, backend="threading") as parallel:
         for data in test_loader:
             pred = model(data.to(device))
             pred = postprocess(pred)
             res = parallel(delayed(process_pred)(pred[0][i, :, :], pred[1][i, :, :]) for i in range(pred[0].shape[0]))
             answer_key.update({(i+frame):enc for (i, enc) in enumerate(res)})
-            frame+=pred[0].shape[0]
+            frame+=len(res)
 
 print(time.time()-c_time)
+print(frame)
 
 #print(json.dumps(answer_key))
 
-#with open('preds.json', 'w') as outfile:
-    #json.dump(answer_key, outfile)
+with open('preds.json', 'w') as outfile:
+    json.dump(answer_key, outfile)

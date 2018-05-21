@@ -35,3 +35,17 @@ class BCEDiceLoss(nn.Module):
         bce = nn.BCELoss()(input, target)
         dice = self.dice(input, target)
         return self.bce_coef * bce + dice
+
+class LyftLoss(nn.Module):
+    def __init__(self, bce_coef, car_coef):
+        super().__init__()
+        self.car_coef = car_coef
+        self.bcedice = BCEDiceLoss(bce_coef)
+        self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
+
+    def forward(self, input, target):
+        target = self.pad(target)
+        other = self.bcedice(input[:,:2,:,:], target[:,:2,:,:])
+        car = self.bcedice(input[:,2,:,:].unsqueeze(1),
+                      target[:,2,:,:].unsqueeze(1))
+        return self.car_coef * car + other
