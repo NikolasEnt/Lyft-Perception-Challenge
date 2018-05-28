@@ -52,20 +52,6 @@ class BCEDiceLoss(nn.Module):
         dice = self.dice(input, target)
         return self.bce_coef * bce + dice
 
-class LyftLoss(nn.Module):
-    def __init__(self, bce_coef, car_coef):
-        super().__init__()
-        self.car_coef = car_coef
-        self.bcedice = BCEDiceLoss(bce_coef)
-        self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
-
-    def forward(self, input, target):
-        target = self.pad(target)
-        other = self.bcedice(input[:,:2,:,:], target[:,:2,:,:])
-        car = self.bcedice(input[:,2,:,:].unsqueeze(1),
-                      target[:,2,:,:].unsqueeze(1))
-        return self.car_coef * car + other
-
 class LyftLoss2(nn.Module):
     def __init__(self, bce_w=1, car_w=1):
         super().__init__()
@@ -76,8 +62,37 @@ class LyftLoss2(nn.Module):
 
     def forward(self, input, target):
         target = self.pad(target)
-        bce_loss = self.bce(input, target)
+        #bce_loss = self.bce(input, target)
         other = 1-fb_loss(input[:,:2,:,:], target[:,:2,:,:], 0.5)  # F0.5 road and bg
         car = 1-fb_loss(input[:,2,:,:].unsqueeze(1),
                         target[:,2,:,:].unsqueeze(1), 2)  # F2 car
-        return self.car_w * car + other + self.bce_w * bce_loss
+        return self.car_w * car + other# + self.bce_w * bce_loss
+
+
+class LyftLoss(nn.Module):
+    def __init__(self, bce_w=1, car_w=1, other_w=1):
+        super().__init__()
+        self.bce_w = bce_w
+        self.car_w = car_w
+        self.other_w = other_w
+        self.bce = nn.BCELoss()
+        self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
+
+    def forward(self, input, target):
+        target = self.pad(target)
+        if self.bce_w > 0:
+            bce_loss = self.bce(input, target)
+        else:
+            bce_loss = 0
+        if self.other_w > 0:
+            other = 1-fb_loss(input[:,0,:,:], target[:,0,:,:], 1.0)  # F1 bg
+        else:
+            other = 0
+        road = 1-fb_loss(input[:,1,:,:], target[:,1,:,:], 0.5)  # F0.5 road
+        if self.car_w > 0:
+            car = 1-fb_loss(input[:,2,:,:].unsqueeze(1),
+                            target[:,2,:,:].unsqueeze(1), 2)  # F2 car
+        else:
+            car = 0
+        return self.car_w * car + self.other_w * other + road\
+               + self.bce_w * bce_loss
