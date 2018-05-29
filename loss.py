@@ -85,10 +85,10 @@ class LyftLoss(nn.Module):
         else:
             bce_loss = 0
         if self.other_w > 0:
-            other = 1-fb_loss(input[:,0,:,:], target[:,0,:,:], 1.0)  # F1 bg
+            other = 1-fb_loss(input[:,0,:,:].unsqueeze(1), target[:,0,:,:].unsqueeze(1), 1.0)  # F1 bg
         else:
             other = 0
-        road = 1-fb_loss(input[:,1,:,:], target[:,1,:,:], 0.5)  # F0.5 road
+        road = 1-fb_loss(input[:,1,:,:].unsqueeze(1), target[:,1,:,:].unsqueeze(1), 0.5)  # F0.5 road
         if self.car_w > 0:
             car = 1-fb_loss(input[:,2,:,:].unsqueeze(1),
                             target[:,2,:,:].unsqueeze(1), 2)  # F2 car

@@ -73,6 +73,7 @@ class LinkNet34(nn.Module):
         self.finalrelu2 = nonlinearity(inplace=True)
         self.finalconv3 = nn.Conv2d(32, num_classes, 2, padding=1)
         self.sigmoid = nn.Sigmoid()
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
         x = self.pad(x)
@@ -98,7 +99,7 @@ class LinkNet34(nn.Module):
         x = self.finalconv2(x)
         x = self.finalrelu2(x)
         x = self.finalconv3(x)
-        return self.sigmoid(x)
+        return self.softmax(x)
 
 
 class LinkNet18(nn.Module):
