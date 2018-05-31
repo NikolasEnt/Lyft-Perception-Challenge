@@ -1,15 +1,22 @@
 """
-From https://github.com/asanakoy/kaggle_carvana_segmentation
-all credits to @nizhib
+With inspiration from https://github.com/asanakoy/kaggle_carvana_segmentation/blob/master/albu/src/pytorch_zoo/linknet.py
+and @nizhib
 """
+
+import importlib
+
 import torch
 import torch.nn as nn
-from torchvision import models
 import torch.nn.functional as F
-import math
-import torch.utils.model_zoo as model_zoo
 
 nonlinearity = nn.ReLU
+
+
+def class_for_name(module_name, class_name):
+    # load the module, will raise ImportError if module cannot be loaded
+    m = importlib.import_module(module_name)
+    # get the class, will raise AttributeError if class cannot be found
+    return getattr(m, class_name)
 
 
 class DecoderBlock(nn.Module):
@@ -44,14 +51,33 @@ class DecoderBlock(nn.Module):
         x = self.relu3(x)
         return x
 
-class LinkNet34(nn.Module):
-    def __init__(self, num_classes, num_channels=3):
+
+class LinkNet(nn.Module):
+    def __init__(self, num_classes, num_channels=3, encoder='resnet34',
+                 final='softmax'):
         super().__init__()
-        assert num_channels == 3, "num channels not used now. to use changle first conv layer to support num channels other then 3"
-        filters = [64, 128, 256, 512]
-        resnet = models.resnet34(pretrained=True)
+        assert num_channels > 0, "Incorrect num channels"
+        assert encoder in ['resnet18', 'resnet34', 'resnet50',\
+                           'resnet101', 'resnet152'],\
+                           "Incorrect encoder type"
+        assert final in ['softmax', 'sigmoid'],\
+                         "Incorrect output type"
+
+        if encoder in ['resnet18', 'resnet34']:
+            filters = [64, 128, 256, 512]
+        else:
+            filters = [256, 512, 1024, 2048]
+        # Padding is used to take 800x600 px input
         self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
-        self.firstconv = resnet.conv1
+        resnet = class_for_name("torchvision.models", encoder)\
+                                (pretrained=False)
+        if num_channels != 3:  # Number of input channels
+            self.firstconv = nn.Conv2d(num_channels, 64, kernel_size=(7, 7),
+                              stride=(2, 2), padding=(3, 3),
+                              bias=False)
+        else:
+            self.firstconv = resnet.conv1
+
         self.firstbn = resnet.bn1
         self.firstrelu = resnet.relu
         self.firstmaxpool = resnet.maxpool
@@ -72,8 +98,12 @@ class LinkNet34(nn.Module):
         self.finalconv2 = nn.Conv2d(32, 32, 3)
         self.finalrelu2 = nonlinearity(inplace=True)
         self.finalconv3 = nn.Conv2d(32, num_classes, 2, padding=1)
-        self.sigmoid = nn.Sigmoid()
-        self.softmax = nn.Softmax(dim=1)
+
+        if final=='softmax':
+            self.final = nn.Softmax(dim=1)
+        else:
+            self.final = nn.Sigmoid()
+
 
     def forward(self, x):
         x = self.pad(x)
@@ -99,64 +129,4 @@ class LinkNet34(nn.Module):
         x = self.finalconv2(x)
         x = self.finalrelu2(x)
         x = self.finalconv3(x)
-        return self.softmax(x)
-
-
-class LinkNet18(nn.Module):
-    def __init__(self, input_channels, output_channels):
-        super().__init__()
-        assert input_channels > 0
-        filters = [64, 128, 256, 512]
-        resnet = models.resnet18(pretrained=False)
-
-        if input_channels != 3:
-            resnet.conv1 = Conv2d(input_channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-
-        self.firstconv = resnet.conv1
-        self.firstbn = resnet.bn1
-        self.firstrelu = resnet.relu
-        self.firstmaxpool = resnet.maxpool
-        self.encoder1 = resnet.layer1
-        self.encoder2 = resnet.layer2
-        self.encoder3 = resnet.layer3
-        self.encoder4 = resnet.layer4
-
-        # Decoder
-        self.decoder4 = DecoderBlock(filters[3], filters[2])
-        self.decoder3 = DecoderBlock(filters[2], filters[1])
-        self.decoder2 = DecoderBlock(filters[1], filters[0])
-        self.decoder1 = DecoderBlock(filters[0], filters[0])
-
-        # Final Classifier
-        self.finaldeconv1 = nn.ConvTranspose2d(filters[0], 32, 3, stride=2)
-        self.finalrelu1 = nonlinearity(inplace=True)
-        self.finalconv2 = nn.Conv2d(32, 32, 3)
-        self.finalrelu2 = nonlinearity(inplace=True)
-        self.finalconv3 = nn.Conv2d(32, output_channels, 2, padding=1)
-        self.sigmoid = nn.Sigmoid()
-
-    # noinspection PyCallingNonCallable
-    def forward(self, x):
-        # Encoder
-        x = self.firstconv(x)
-        x = self.firstbn(x)
-        x = self.firstrelu(x)
-        x = self.firstmaxpool(x)
-        e1 = self.encoder1(x)
-        e2 = self.encoder2(e1)
-        e3 = self.encoder3(e2)
-        e4 = self.encoder4(e3)
-
-        # Decoder with Skip Connections
-        d4 = self.decoder4(e4) + e3
-        d3 = self.decoder3(d4) + e2
-        d2 = self.decoder2(d3) + e1
-        d1 = self.decoder1(d2)
-
-        # Final Classification
-        f1 = self.finaldeconv1(d1)
-        f2 = self.finalrelu1(f1)
-        f3 = self.finalconv2(f2)
-        f4 = self.finalrelu2(f3)
-        f5 = self.finalconv3(f4)
-        return self.sigmoid(f5)
+        return self.final(x)

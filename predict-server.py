@@ -1,7 +1,5 @@
 import os
-import sys
 import cv2
-import time
 import torch
 import numpy as np
 import torch.nn as nn
@@ -9,19 +7,17 @@ from torchvision.transforms import ToTensor
 from torch.utils.data import Dataset, DataLoader
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from io import BytesIO, StringIO
-from PIL import Image
-import sys, json, pybase64
+import json, pybase64
 
-from model import LinkNet34
+from model import LinkNet
 
 from joblib import Parallel, delayed
 
-model_path = './data/models/resnet34_test_cpt.pth'
+model_path = './data/models/resnet34_test.pth'
 
 batch = 4
-THRES_VEH = 0.01
-THRES_ROAD = 0.5
+THRES_VEH = 1e-5
+THRES_ROAD = 0.75
 
 class Dilation(nn.Module):
     def __init__(self, kernel_size):
@@ -31,6 +27,7 @@ class Dilation(nn.Module):
             kernel = torch.from_numpy(np.array([[0,1,0],
                                                 [1,1,1],
                                                 [0,1,0]]))
+            #kernel = torch.ones(3,3)
         elif kernel_size == 5:
             kernel = torch.from_numpy(np.array([[0,0,1,0,0],
                                                 [0,1,1,1,0],
@@ -89,26 +86,18 @@ class PostProcess(nn.Module):
         super().__init__()
         self.zero = torch.tensor(0).type(torch.cuda.FloatTensor)
         self.one = torch.tensor(1).type(torch.cuda.FloatTensor)
-        
+
         self.zero_b = torch.tensor(0).type(torch.cuda.ByteTensor)
         self.one_b = torch.tensor(1).type(torch.cuda.ByteTensor)
-        self.erosion = Erosion(5)
+        #self.erosion = Erosion(5)
         self.dilation = Dilation(3)
 
     def forward(self, x):
-        x = x[:, :, 4:604, :]
-        car = torch.where(x[:,2,:,:]>THRES_VEH, self.one, self.zero)
-        road = torch.where(x[:,1,:,:]>THRES_ROAD, self.one_b, self.zero_b)
-        #other = torch.where(x[:,0,:,:]>THRES_ROAD, self.zero, self.one)
-        #car = car+other-road
-        #road = other-car
-        #car = torch.where(car>0, self.one_b, self.zero_b)
-        #road = torch.where(road>0, self.one_b, self.zero_b)
-        car = self.dilation(car)#.type(torch.cuda.FloatTensor)
-        #road = self.erosion(road).type(torch.cuda.FloatTensor)
-        #road = self.dilation(road).type(torch.cuda.FloatTensor)
-        #road = self.erosion(road)
-        #car = self.erosion(car)
+        x = x[:, 1:, 4:604, :]
+        car = torch.where(x[:,1,:,:]>THRES_VEH, self.one, self.zero)
+        road = torch.where(x[:,0,:,:]>THRES_ROAD, self.one_b,
+                           self.zero_b)
+        car = self.dilation(car)
         return [car, road]
 
 def encode(array):
@@ -139,7 +128,7 @@ class LyftTestDataset(Dataset):
         return img
 
 device = torch.device("cuda:0") 
-model = LinkNet34(3, 3).to(device)
+model = LinkNet(3, 3, 'resnet34', 'softmax').to(device)
 state = torch.load(model_path)
 model.load_state_dict(state)
 model.eval()
@@ -147,8 +136,9 @@ postprocess = PostProcess()
 
 def predict(v_file):
     test_dataset = LyftTestDataset(v_file, ToTensor())
-    test_loader = DataLoader(test_dataset, batch_size=batch, shuffle=False,
-                             num_workers=2, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch,
+                             shuffle=False, num_workers=2,
+                             pin_memory=True)
     answer_key = {}
     frame = 1
     with torch.no_grad():
@@ -156,8 +146,10 @@ def predict(v_file):
             for data in test_loader:
                 pred = model(data.to(device))
                 pred = postprocess(pred)
-                res = parallel(delayed(process_pred)(pred[0][i, :, :], pred[1][i, :, :]) for i in range(pred[0].shape[0]))
-                answer_key.update({(i+frame):enc for (i, enc) in enumerate(res)})
+                res = parallel(delayed(process_pred)(pred[0][i, :, :],
+                    pred[1][i, :, :]) for i in range(pred[0].shape[0]))
+                answer_key.update({(i+frame):enc for (i, enc)
+                                  in enumerate(res)})
                 frame+=len(res)
     return answer_key
 
