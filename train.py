@@ -14,17 +14,17 @@ from model import LinkNet
 
 
 epochs = 1
-batch = 8
+batch = 16 
 lr = 1e-4
-model_path = './data/models/resnet34_test.pth'
-load_model_path = './data/models/resnet34_012_04.pth'
+model_path = './data/models/resnet34_016.pth'
+load_model_path = None#'./data/models/resnet34_012_04.pth'
 encoder='resnet34'
 final='softmax'
 gamma = 0.25
 brightness = 2.0
 colors = 0.15
-train_dirs = ['data/train/']#, 'data/dataset/', 'data/carla-capture-20180528/', 'data/data/Train/', 'data/data/Valid/']
-val_dirs=['data/data/Test/']#, 'data/carla-capture-20181305/']
+train_dirs = ['data/train/', 'data/dataset/', 'data/carla-capture-20180528/', 'data/data/Train/', 'data/data/Valid/']
+val_dirs=['data/data/Test/', 'data/carla-capture-20181305/']
 
 
 np.random.seed(123)
@@ -134,7 +134,7 @@ val_loader = DataLoader(val_dataset, batch_size=batch, shuffle=False)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-train_loss = LyftLoss(bce_w=0, car_w=1, other_w=1).to(device)
+train_loss = LyftLoss(bce_w=0, car_w=1.5, other_w=0.25).to(device)
 val_loss = LyftLoss(bce_w=0, car_w=1, other_w=0).to(device)
 model = LinkNet(3, 3, encoder, final).to(device)
 optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -193,9 +193,13 @@ def train(epochs):
 
 torch.cuda.synchronize()
 
-train(epochs)
+train(50)
 lr=1e-5
-train(epochs)
+optimizer = optim.Adam(model.parameters(), lr=lr)
+train(10)
+lr=1e-6
+optimizer = optim.Adam(model.parameters(), lr=lr)
+train(10)
 
 
 print('Finished Training')
