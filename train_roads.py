@@ -9,21 +9,21 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
-from loss import LyftLoss
+from loss import LyftRoadLoss
 from model import LinkNet
 
 
 batch = 16
 lr = 1e-3
-model_path = './data/models/resnet34_all_001.pth'
+model_path = './data/models/resnet34_road_001.pth'
 load_model_path = None#'./data/models/resnet34_012_04.pth'
 encoder='resnet34'
 final='softmax'
 gamma = 0.25
 brightness = 2.0
 colors = 0.15
-train_dirs = ['data/train/']#, 'data/dataset/', 'data/carla-capture-20180528/', 'data/data/Train/', 'data/data/Valid/']\
-    #+[os.path.join('data/dataset2', datadir) for datadir in os.listdir('data/dataset2')]
+train_dirs = ['data/train/', 'data/dataset/', 'data/carla-capture-20180528/', 'data/data/Train/', 'data/data/Valid/']\
+    +[os.path.join('data/dataset2', datadir) for datadir in os.listdir('data/dataset2')]
 val_dirs=['data/data/Test/']#, 'data/carla-capture-20181305/']
 
 
@@ -97,11 +97,10 @@ class LyftDataset(Dataset):
         h, w, _ = trg.shape
         mask = np.zeros((h+2, w+2, 1), dtype=np.uint8)
         cv2.floodFill(trg, mask, (w//2, h-1), (0,0,0))
-        vehicles = (trg[:, :, 2]==10).astype(np.float)
         road = (trg[:, :, 2]==6).astype(np.float)
         road += (trg[:, :, 2]==7).astype(np.float)
-        bg = np.ones(vehicles.shape) - vehicles - road
-        return np.stack([bg, road, vehicles], axis=2)
+        bg = np.ones(road.shape) - road
+        return np.stack([bg, road], axis=2)
 
     def __len__(self):
         if self.read:
@@ -116,8 +115,8 @@ class LyftDataset(Dataset):
         else:
             img = cv2.imread(self.img_paths[idx])
             trg = self._fix_trg(cv2.imread(self.trg_paths[idx]))
-        img = img[205:525,:,:]
-        trg = trg[205:525,:,:]
+        img = img[301:525,:,:]
+        trg = trg[301:525,:,:]
         if self.img_transform is not None:
             img = self.img_transform(img)
         if self.trg_transform is not None:
@@ -136,9 +135,9 @@ val_loader = DataLoader(val_dataset, batch_size=batch, shuffle=False)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-train_loss = LyftLoss(bce_w=0, car_w=2.0, other_w=0.5).to(device)
-val_loss = LyftLoss(bce_w=0, car_w=1, other_w=0).to(device)
-model = LinkNet(3, 3, encoder, final).to(device)
+train_loss = LyftRoadLoss(other_w=0.5).to(device)
+val_loss = LyftRoadLoss(other_w=0).to(device)
+model = LinkNet(2, 3, encoder, final).to(device)
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
 if load_model_path is not None:
@@ -188,14 +187,14 @@ def train(epochs):
             torch.save(model.state_dict(), model_path[:-4]+'_cpt_'+str(val_s_f)+model_path[-4:])
             best_loss = val_s
             print("Checkpoint saved")
-        losses.append([running_loss, val])
+        losses.append([running_loss, val_s])
         running_loss = 0.0
     torch.save(model.state_dict(), model_path[:-4]+'_res_'+str(val_s_f)+model_path[-4:])
     print(losses)
 
 torch.cuda.synchronize()
 
-train(5)
+train(epochs)
 
 
 print('Finished Training')

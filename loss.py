@@ -76,10 +76,10 @@ class LyftLoss(nn.Module):
         self.car_w = car_w
         self.other_w = other_w
         self.bce = nn.BCELoss()
-        self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
+        #self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
 
     def forward(self, input, target):
-        target = self.pad(target)
+        #target = self.pad(target)
         if self.bce_w > 0:
             bce_loss = self.bce(input, target)
         else:
@@ -96,3 +96,29 @@ class LyftLoss(nn.Module):
             car = 0
         return self.car_w * car + self.other_w * other + road\
                + self.bce_w * bce_loss
+
+class LyftRoadLoss(nn.Module):
+    def __init__(self, other_w=1):
+        super().__init__()
+        self.other_w = other_w
+
+    def forward(self, input, target):
+        if self.other_w > 0:
+            other = 1-fb_loss(input[:,0,:,:].unsqueeze(1), target[:,0,:,:].unsqueeze(1), 1.0)  # F1 bg
+        else:
+            other = 0
+        road = 1-fb_loss(input[:,1,:,:].unsqueeze(1), target[:,1,:,:].unsqueeze(1), 0.5)  # F0.5 road
+        return self.other_w * other + road
+
+class LyftCarLoss(nn.Module):
+    def __init__(self, other_w=1):
+        super().__init__()
+        self.other_w = other_w
+
+    def forward(self, input, target):
+        if self.other_w > 0:
+            other = 1-fb_loss(input[:,0,:,:].unsqueeze(1), target[:,0,:,:].unsqueeze(1), 1.0)  # F1 bg
+        else:
+            other = 0
+        car = 1-fb_loss(input[:,1,:,:].unsqueeze(1), target[:,1,:,:].unsqueeze(1), 2.0)  # F2 car
+        return self.other_w * other + car

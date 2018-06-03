@@ -106,7 +106,7 @@ class LinkNet(nn.Module):
 
 
     def forward(self, x):
-        x = self.pad(x)
+        #x = self.pad(x)
         # Encoder
         x = self.firstconv(x)
         x = self.firstbn(x)
