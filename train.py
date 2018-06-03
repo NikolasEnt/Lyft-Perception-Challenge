@@ -22,8 +22,8 @@ final='softmax'
 gamma = 0.25
 brightness = 2.0
 colors = 0.15
-train_dirs = ['data/train/']#, 'data/dataset/', 'data/carla-capture-20180528/', 'data/data/Train/', 'data/data/Valid/']\
-    #+[os.path.join('data/dataset2', datadir) for datadir in os.listdir('data/dataset2')]
+train_dirs = ['data/train/', 'data/dataset/', 'data/carla-capture-20180528/', 'data/data/Train/', 'data/data/Valid/']\
+    +[os.path.join('data/dataset2', datadir) for datadir in os.listdir('data/dataset2')]
 val_dirs=['data/data/Test/']#, 'data/carla-capture-20181305/']
 
 
@@ -196,6 +196,8 @@ def train(epochs):
 torch.cuda.synchronize()
 
 train(5)
+#lr=1e-5
+#optimizer = optim.Adam(model.parameters(), lr=lr)
 
 
 print('Finished Training')
