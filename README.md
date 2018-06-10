@@ -7,7 +7,10 @@
 Your goal in this challenge is pixel-wise identification of objects in camera images. The segmentation targets are other cars and the drivable area of the road.
 Images from the [CARLA](http://carla.org/) 0.8.2 simulator are used for training and testing in the challenge.
 
-For details see my website: [https://NikolasEnt.github.io](https://nikolasent.github.io/proj/comp2).
+For details see my website: __[https://NikolasEnt.github.io](https://nikolasent.github.io/proj/comp2)__.
+
+The solution is based on a LinkNet neural network for semantic segmentation. Loss function is based on a weighted pixel-wise F-eta scores.
+The approach contains some inference speed up techniques as FPS was an essential part of the competition.
 
 ### Requirements
 
@@ -37,6 +40,8 @@ A client-server approach was used for the inferencestage, that is why one should
 python predict-server.py
 ```
 
+One may need to adjust batch size (`batch`) and number of threads for parallel prediction encoding (`n_jobs`) for performance maximization on a given hardware setup.
+
 And after it is ready, the client can be used:
 
 ```
@@ -44,4 +49,5 @@ And after it is ready, the client can be used:
 python predict-client.py path/to/the/test/video
 ```
 
-It will print out the prediction results as base64 masks encoded with png. To save the predictions as a json file, uncomment [lines 12-13](https://github.com/NikolasEnt/Lyft-Perception-Challenge/blob/0c042ed05b11f31304df2e73676f2c0aaaf34382/predict-client.py#L12) in the predict-client.py
+It will print out the prediction results as base64 masks encoded with png. To save the predictions as a json file, uncomment [lines 12-13](https://github.com/NikolasEnt/Lyft-Perception-Challenge/blob/0c042ed05b11f31304df2e73676f2c0aaaf34382/predict-client.py#L12) in the predict-client.py.
+Current implementation takes 800x600 px video as an input file.

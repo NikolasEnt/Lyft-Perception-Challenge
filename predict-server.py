@@ -16,7 +16,8 @@ from model import LinkNet
 
 model_path = './data/models/resnet34_001.pth'  # Path to the best model
 
-batch = 4
+batch = 4  # Images per batch
+n_jobs = 4  # Number of threads for parallel predictions encoding
 THRES_VEH = 1e-5
 THRES_ROAD = 1-1e-5
 
@@ -98,7 +99,7 @@ def predict(v_file):
     answer_key = {}
     frame = 1
     with torch.no_grad():
-        with Parallel(n_jobs=batch, backend="threading") as parallel:
+        with Parallel(n_jobs=n_jobs, backend="threading") as parallel:
             for data in test_loader:
                 pred = model(data.to(device))
                 pred = postprocess(pred)
