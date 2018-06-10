@@ -6,80 +6,27 @@ import torch.nn as nn
 from torchvision.transforms import ToTensor
 from torch.utils.data import Dataset, DataLoader
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from joblib import Parallel, delayed
 
 import json, pybase64
 
+from dataprocess import Dilation, Erosion
 from model import LinkNet
 
-from joblib import Parallel, delayed
 
-model_path = './data/models/resnet34_test.pth'
+model_path = './data/models/resnet34_001.pth'  # Path to the best model
 
 batch = 4
 THRES_VEH = 1e-5
-THRES_ROAD = 0.75
+THRES_ROAD = 1-1e-5
 
-class Dilation(nn.Module):
-    def __init__(self, kernel_size):
-        super().__init__()
-        self.pad = kernel_size//2
-        if kernel_size == 3:
-            kernel = torch.from_numpy(np.array([[0,1,0],
-                                                [1,1,1],
-                                                [0,1,0]]))
-            #kernel = torch.ones(3,3)
-        elif kernel_size == 5:
-            kernel = torch.from_numpy(np.array([[0,0,1,0,0],
-                                                [0,1,1,1,0],
-                                                [1,1,1,1,1],
-                                                [0,1,1,1,0],
-                                                [0,0,1,0,0]]))
-        else:
-            kernel = torch.ones(kernel_size, kernel_size)
-            n = kernel_size**2
-        self.kernel = (kernel.unsqueeze(0).unsqueeze(0)\
-                       .type(torch.cuda.FloatTensor))
-        self.zero_b = torch.tensor(0).type(torch.cuda.ByteTensor)
-        self.one_b = torch.tensor(1).type(torch.cuda.ByteTensor)
-    
-    def forward(self, x):
-        x = torch.nn.functional.conv2d(torch.unsqueeze(x, 1),
-                                         self.kernel, padding=self.pad)
-        x = torch.squeeze(x)
-        x = torch.where(x>0, self.one_b, self.zero_b)
-        return x
+# Define ROI:
+top = 205
+bottom = 525  # bottom-top should be a multiple of 32
 
-class Erosion(nn.Module):
-    def __init__(self, kernel_size):
-        super().__init__()
-        self.pad = kernel_size//2
-        if kernel_size == 3:
-            kernel = torch.from_numpy(np.array([[0,1,0],
-                                                [1,1,1],
-                                                [0,1,0]]))
-            n = 5
-        elif kernel_size == 5:
-            kernel = torch.from_numpy(np.array([[0,0,1,0,0],
-                                                [0,1,1,1,0],
-                                                [1,1,1,1,1],
-                                                [0,1,1,1,0],
-                                                [0,0,1,0,0]]))
-            n = 13
-        else:
-            kernel = torch.ones(kernel_size, kernel_size)
-            n = kernel_size**2
-        self.kernel = (kernel.unsqueeze(0).unsqueeze(0)\
-                       .type(torch.cuda.FloatTensor)/n)
-        self.zero_b = torch.tensor(0).type(torch.cuda.ByteTensor)
-        self.one_b = torch.tensor(1).type(torch.cuda.ByteTensor)
-        self.one_eps = 1 - 1e-4
-    
-    def forward(self, x):
-        x = torch.nn.functional.conv2d(torch.unsqueeze(x, 1),
-                                         self.kernel, padding=self.pad)
-        x = torch.squeeze(x)
-        x = torch.where(x>=self.one_eps, self.one_b, self.zero_b)
-        return x
+hood_path = 'hood.npy'
+hood = np.load(hood_path)
+hood = torch.from_numpy(hood).type(torch.cuda.ByteTensor)
 
 class PostProcess(nn.Module):
     def __init__(self):
@@ -89,16 +36,23 @@ class PostProcess(nn.Module):
 
         self.zero_b = torch.tensor(0).type(torch.cuda.ByteTensor)
         self.one_b = torch.tensor(1).type(torch.cuda.ByteTensor)
-        #self.erosion = Erosion(5)
-        self.dilation = Dilation(3)
+        self.dilation3 = Dilation(3, True)
 
     def forward(self, x):
-        x = x[:, 1:, 4:604, :]
-        car = torch.where(x[:,1,:,:]>THRES_VEH, self.one, self.zero)
+        x = x[:,1:,:,:]
+
+        car = torch.where(x[:,1,:,:]>THRES_VEH, self.one_b, self.zero_b)
         road = torch.where(x[:,0,:,:]>THRES_ROAD, self.one_b,
                            self.zero_b)
-        car = self.dilation(car)
-        return [car, road]
+        car_ret = torch.zeros(x.size()[0],600,800).type(torch.cuda.ByteTensor)
+        road_ret = torch.zeros(x.size()[0],600,800).type(torch.cuda.ByteTensor)
+        car_ret[:,top:bottom,:] = car
+        road_ret[:,top:bottom,:] = road
+        # The hood deduction
+        for i in range(x.size()[0]):
+            car_ret[i,:,:] = car_ret[i,:,:] & hood
+            road_ret[i,:,:] = road_ret[i,:,:] & hood
+        return [car_ret, road_ret]
 
 def encode(array):
     buff = cv2.imencode(".png", array)[1]
@@ -115,19 +69,21 @@ class LyftTestDataset(Dataset):
         ret = True
         while ret:
             ret, img = cap.read()
-            self.video.append(img)
+            if ret:
+                self.video.append(img)
         self.img_transform = img_transform
 
     def __len__(self):
-        return len(self.video)-1
+        return len(self.video)
 
     def __getitem__(self, idx):
-        img = self.video[idx]
+        img = self.video[idx][top:bottom,:,:]
         if self.img_transform is not None:
             img = self.img_transform(img)
         return img
 
-device = torch.device("cuda:0") 
+
+device = torch.device("cuda") 
 model = LinkNet(3, 3, 'resnet34', 'softmax').to(device)
 state = torch.load(model_path)
 model.load_state_dict(state)
@@ -150,7 +106,7 @@ def predict(v_file):
                     pred[1][i, :, :]) for i in range(pred[0].shape[0]))
                 answer_key.update({(i+frame):enc for (i, enc)
                                   in enumerate(res)})
-                frame+=len(res)
+                frame += len(res)
     return answer_key
 
 
@@ -170,11 +126,10 @@ class FunHTTPRequestHandler(BaseHTTPRequestHandler):
 
     except IOError:
       self.send_error(404, 'file not found')
-  
+
+
 def run():
-  print('http server is starting...')
-  #ip and port of servr
-  #by default http server port is 8081
+  print('http server is starting at 127.0.0.1:8081...')
   server_address = ('127.0.0.1', 8081)
   httpd = HTTPServer(server_address, FunHTTPRequestHandler)
   print('http server is running...')

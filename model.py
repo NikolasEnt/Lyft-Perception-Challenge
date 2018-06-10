@@ -1,6 +1,5 @@
 """
 With inspiration from https://github.com/asanakoy/kaggle_carvana_segmentation/blob/master/albu/src/pytorch_zoo/linknet.py
-and @nizhib
 """
 
 import importlib
@@ -68,13 +67,13 @@ class LinkNet(nn.Module):
         else:
             filters = [256, 512, 1024, 2048]
         # Padding is used to take 800x600 px input
-        self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
+        #self.pad = nn.ReflectionPad2d((0, 0, 4, 4))
         resnet = class_for_name("torchvision.models", encoder)\
                                 (pretrained=False)
         if num_channels != 3:  # Number of input channels
-            self.firstconv = nn.Conv2d(num_channels, 64, kernel_size=(7, 7),
-                              stride=(2, 2), padding=(3, 3),
-                              bias=False)
+            self.firstconv = nn.Conv2d(num_channels, 64,
+                              kernel_size=(7, 7), stride=(2, 2),
+                              padding=(3, 3), bias=False)
         else:
             self.firstconv = resnet.conv1
 
@@ -93,7 +92,8 @@ class LinkNet(nn.Module):
         self.decoder1 = DecoderBlock(filters[0], filters[0])
 
         # Final Classifier
-        self.finaldeconv1 = nn.ConvTranspose2d(filters[0], 32, 3, stride=2)
+        self.finaldeconv1 = nn.ConvTranspose2d(filters[0], 32, 3,
+                                               stride=2)
         self.finalrelu1 = nonlinearity(inplace=True)
         self.finalconv2 = nn.Conv2d(32, 32, 3)
         self.finalrelu2 = nonlinearity(inplace=True)

@@ -7,67 +7,40 @@ import numpy as np
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
+from torch.utils.data import DataLoader, ConcatDataset
 
+from dataprocess import AugmentColor, ToTensor, LyftDataset
 from loss import LyftLoss
 from model import LinkNet
 
 
-batch = 16
-lr = 1e-3
-model_path = './data/models/resnet34_all_001.pth'
-load_model_path = None#'./data/models/resnet34_012_04.pth'
-encoder='resnet34'
-final='softmax'
-gamma = 0.25
+batch = 16  # 32 if you have 16 GB of VRAM
+hood_path = 'hood.npy'  # Path to the saved hood mask
+model_path = './data/models/resnet34_001.pth'  # Name for the model save
+load_model_path = None  # Load pretrain path
+encoder='resnet34'  # Encoder type: 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
+final='softmax'  # Output layer type. 'softmax' or 'sigmoid'
+# Image augmentation parameters
+gamma = 0.35
 brightness = 2.0
-colors = 0.15
-train_dirs = ['data/train/', 'data/dataset/', 'data/carla-capture-20180528/', 'data/data/Train/', 'data/data/Valid/']\
-    +[os.path.join('data/dataset2', datadir) for datadir in os.listdir('data/dataset2')]
-val_dirs=['data/data/Test/']#, 'data/carla-capture-20181305/']
+colors = 0.25
 
+train_dirs = ['data/train/']  # List train dirs here
+val_dirs=['data/val/']  # List dirs with validation datasets
 
 np.random.seed(123)
 
-class AugmentColor(object):
-    def __init__(self, gamma, brightness, colors):
-        self.gamma = gamma
-        self.brightness = brightness
-        self.colors = colors
+# Loss components weights
+train_bce_w = 0.0
+train_car_w = 1.0
+train_other_w = 1.0
+val_bce_w = 0.0
+val_car_w = 1.0
+val_other_w = 0.0
 
-    def __call__(self, img):
-        p = np.random.uniform(0, 1, 1)
-        if p > 0.5:
-            # randomly shift gamma
-            random_gamma = torch.from_numpy(np.random.uniform(1-self.gamma, 1+self.gamma, 1)).type(torch.cuda.FloatTensor)
-            img  = img  ** random_gamma
-
-        p = np.random.uniform(0, 1, 1)
-        if p > 0.5:
-            # randomly shift brightness
-            random_brightness =  torch.from_numpy(np.random.uniform(1/self.brightness, self.brightness, 1))\
-                .type(torch.cuda.FloatTensor)
-            img  =  img * random_brightness
-
-        p = np.random.uniform(0, 1, 1)
-        if p > 0.5:
-            # randomly shift color
-            random_colors =  torch.from_numpy(np.random.uniform(1-self.colors, 1+self.colors, 3))\
-                .type(torch.cuda.FloatTensor)
-            white = torch.ones([np.shape(img)[1], np.shape(img)[2]]).type(torch.cuda.FloatTensor)
-            color_image = torch.stack([white * random_colors[i] for i in range(3)], dim=0)
-            img  *= color_image
-
-        # saturate
-        img  = torch.clamp(img,  0, 1)
-        return img
-
-class ToTensor(object):
-    def __init__(self):
-        self.transform = transforms.ToTensor()
-
-    def __call__(self, sample):
-        return self.transform(sample).type(torch.cuda.FloatTensor)
+# Define ROI:
+top = 205
+bottom = 525  # bottom-top should be a multiple of 32
 
 train_transform = transforms.Compose([
     ToTensor(),
@@ -78,69 +51,31 @@ val_transform = transforms.Compose([
     ToTensor(),
 ])
 
-class LyftDataset(Dataset):
-    def __init__(self, data_dir, img_transform=None, trg_transform=None, read=True):
-        img_dir = os.path.join(data_dir, "CameraRGB")
-        trg_dir = os.path.join(data_dir, "CameraSeg")
-        img_paths = sorted(os.listdir(img_dir))
-        trg_paths = sorted(os.listdir(trg_dir))
-        self.img_paths = [os.path.join(img_dir, path) for path in img_paths]
-        self.trg_paths = [os.path.join(trg_dir, path) for path in trg_paths]
-        if read: 
-            self.imgs = [cv2.imread(path) for path in self.img_paths]
-            self.trgs = [self._fix_trg(cv2.imread(path)) for path in self.trg_paths]
-        self.img_transform = img_transform
-        self.trg_transform = trg_transform
-        self.read = read
-    
-    def _fix_trg(self, trg):
-        h, w, _ = trg.shape
-        mask = np.zeros((h+2, w+2, 1), dtype=np.uint8)
-        cv2.floodFill(trg, mask, (w//2, h-1), (0,0,0))
-        vehicles = (trg[:, :, 2]==10).astype(np.float)
-        road = (trg[:, :, 2]==6).astype(np.float)
-        road += (trg[:, :, 2]==7).astype(np.float)
-        bg = np.ones(vehicles.shape) - vehicles - road
-        return np.stack([bg, road, vehicles], axis=2)
 
-    def __len__(self):
-        if self.read:
-            return len(self.imgs)
-        else:
-            return len(self.img_paths)
-
-    def __getitem__(self, idx):
-        if self.read:
-            img = self.imgs[idx]
-            trg = self.trgs[idx]
-        else:
-            img = cv2.imread(self.img_paths[idx])
-            trg = self._fix_trg(cv2.imread(self.trg_paths[idx]))
-        img = img[205:525,:,:]
-        trg = trg[205:525,:,:]
-        if self.img_transform is not None:
-            img = self.img_transform(img)
-        if self.trg_transform is not None:
-            trg = self.trg_transform(trg)
-        return img, trg
-
-train_datasets = [LyftDataset(train_dir, train_transform, transforms.ToTensor(), False) for train_dir in train_dirs]
+train_datasets = [LyftDataset(dir, hood_path, top, bottom,
+                  train_transform, transforms.ToTensor(), False)
+                  for dir in train_dirs]
 train_dataset = ConcatDataset(train_datasets)
-print("Train imgs:", train_dataset.__len__())
-val_datasets = [LyftDataset(val_dir, val_transform, transforms.ToTensor(), False) for val_dir in val_dirs]
+
+val_datasets = [LyftDataset(dir, hood_path, top, bottom, val_transform,
+                transforms.ToTensor(), False) for dir in val_dirs]
 val_dataset = ConcatDataset(val_datasets)
-print("Train imgs:", val_dataset.__len__())
+print("Train imgs:", train_dataset.__len__())
+print("Val imgs:", val_dataset.__len__())
+
+assert torch.cuda.is_available(), "Sorry, no CUDA device found"
 
 train_loader = DataLoader(train_dataset, batch_size=batch, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=batch, shuffle=False)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda")
 
-train_loss = LyftLoss(bce_w=0, car_w=2.0, other_w=0.5).to(device)
-val_loss = LyftLoss(bce_w=0, car_w=1, other_w=0).to(device)
+train_loss = LyftLoss(bce_w=train_bce_w, car_w=train_car_w,
+                      other_w=train_other_w).to(device)
+val_loss = LyftLoss(bce_w=val_bce_w, car_w=val_car_w,
+                    other_w=val_other_w).to(device)
+
 model = LinkNet(3, 3, encoder, final).to(device)
-optimizer = optim.Adam(model.parameters(), lr=lr)
-
 if load_model_path is not None:
     state = torch.load(load_model_path)
     model.load_state_dict(state)
@@ -180,26 +115,37 @@ def train(epochs):
             running_loss += loss.item()
         running_loss /= train_dataset.__len__()
         val_s = val()
-        val_s_f = round((2-val_s*batch)/2, 5)
-        print("Epoch:", epoch+1, "train loss:", round(running_loss, 5), "val loss", round(val_s, 5),
-              "val score:", val_s_f,
+        val_s_f = round((2-val_s*batch)/2, 5)  # LB score on val
+        print("Epoch:", epoch+1, "train loss:", round(running_loss, 5),
+              "val loss", round(val_s, 5), "val score:", val_s_f,
               "time:", round(time.time()-s_time, 2), "s")
         if val_s < best_loss:
-            torch.save(model.state_dict(), model_path[:-4]+'_cpt_'+str(val_s_f)+model_path[-4:])
+            torch.save(model.state_dict(), model_path[:-4] + '_cpt_' \
+                       + str(val_s_f) + model_path[-4:])
             best_loss = val_s
             print("Checkpoint saved")
         losses.append([running_loss, val])
         running_loss = 0.0
-    torch.save(model.state_dict(), model_path[:-4]+'_res_'+str(val_s_f)+model_path[-4:])
+    # Save the train result
+    torch.save(model.state_dict(), model_path[:-4] + '_res_'\
+               + str(val_s_f) + model_path[-4:])
     print(losses)
 
 torch.cuda.synchronize()
 
-train(5)
-#lr=1e-5
-#optimizer = optim.Adam(model.parameters(), lr=lr)
+
+# Define the train protocol here
+lr = 1e-4
+optimizer = optim.Adam(model.parameters(), lr=lr)
+train(epochs=75)
+lr = 1e-5
+optimizer = optim.Adam(model.parameters(), lr=lr)
+train(epochs=20)
+lr = 1e-6
+optimizer = optim.Adam(model.parameters(), lr=lr)
+train(epochs=10)
 
 
-print('Finished Training')
+# Save the final result
 torch.save(model.state_dict(), model_path)
-
+print('Finished Training')
