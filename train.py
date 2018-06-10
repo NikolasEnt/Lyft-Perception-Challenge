@@ -18,15 +18,15 @@ batch = 16  # 32 if you have 16 GB of VRAM
 hood_path = 'hood.npy'  # Path to the saved hood mask
 model_path = './data/models/resnet34_001.pth'  # Name for the model save
 load_model_path = None  # Load pretrain path
-encoder='resnet34'  # Encoder type: 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
-final='softmax'  # Output layer type. 'softmax' or 'sigmoid'
+encoder = 'resnet34'  # Encoder type: 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
+final = 'softmax'  # Output layer type. 'softmax' or 'sigmoid'
 # Image augmentation parameters
 gamma = 0.35
 brightness = 2.0
 colors = 0.25
 
 train_dirs = ['data/train/']  # List train dirs here
-val_dirs=['data/val/']  # List dirs with validation datasets
+val_dirs = ['data/val/']  # List dirs with validation datasets
 
 np.random.seed(123)
 
