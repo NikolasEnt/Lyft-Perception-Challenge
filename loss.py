@@ -17,7 +17,7 @@ def fb_loss(preds, trues, beta):
     Fb = ((1+beta2) * TP + smooth)/((1+beta2) * TP + beta2 * FN\
           + FP + smooth)
     Fb = Fb * weights
-    score = Fb.sum() / weights.sum()
+    score = Fb.sum() / (weights.sum() + smooth)
     return torch.clamp(score, 0., 1.)
 
 
